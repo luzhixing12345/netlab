@@ -2,6 +2,10 @@
 
 NUDT 高级计算机网络实验:基于UDP的可靠传输
 
+[实验材料下载](https://github.com/luzhixing12345/netlab/releases/download/v0.0.1/default.7z)
+
+
+
 ## 实验目的
 
 编写一组 C-S (Client-Server)架构的套接字程序, 通过实验更深刻地认识和理解分组交换网络
@@ -29,6 +33,3 @@ NUDT 高级计算机网络实验:基于UDP的可靠传输
 课程将会对实验报告进行严格打分,包括格式.
 
 课程提供了 Latex 版本的实验报告模板
-
-## 参考
-

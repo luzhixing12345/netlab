@@ -1,0 +1,8 @@
+{
+    "client_file": "client.py",
+    "server_file": "server.py",
+    "client_exec_cmd": "python3 client.py",
+    "server_exec_cmd": "python3 server.py",
+    "generate_type": "generate_same_char",
+    "size": "0.5"
+}
