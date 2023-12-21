@@ -1,12 +1,12 @@
 import socket
-
+from config import SERVER_IP, SERVER_PORT, FILE_NAME
 
 def main():
     # 创建UDP socket
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
     # 绑定到特定的IP地址和端口
-    server_address = ("localhost", 12345)
+    server_address = (SERVER_IP, SERVER_PORT)
     server_socket.bind(server_address)
 
     print(f"UDP 服务端启动,监听 {server_address}")

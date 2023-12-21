@@ -1,12 +1,14 @@
 
 import socket
+from config import SERVER_IP, SERVER_PORT
+
 
 def main():    
     # 创建UDP socket
     client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
     # 服务端地址
-    server_address = ('localhost', 12345)
+    server_address = (SERVER_IP, SERVER_PORT)
 
     # 发送数据
     message = "Hello, server!"
