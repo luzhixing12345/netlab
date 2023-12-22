@@ -1,0 +1,33 @@
+version: "3"
+
+services:
+  host1:
+    image: alpine
+    container_name: client
+    networks:
+      cs_network:
+        ipv4_address: 202.100.10.2
+    command: tail -f /dev/null
+
+  host2:
+    image: alpine
+    container_name: server
+    networks:
+      cs_network:
+        ipv4_address: 202.100.10.3
+    command: tail -f /dev/null
+
+  host3:
+    image: alpine
+    container_name: monitor
+    networks:
+      cs_network:
+        ipv4_address: 202.100.10.4
+    command: tail -f /dev/null
+
+networks:
+  cs_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 202.100.10.0/24

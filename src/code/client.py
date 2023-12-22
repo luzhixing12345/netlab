@@ -1,26 +1,35 @@
-
 import socket
-from config import SERVER_IP, SERVER_PORT
+import time
+from config import *
 
+class Client:
+    
+    def __init__(self) -> None:
+        self.init_socket()
+        self.exchange_info()
+    
+    def init_socket(self):
+        self.control_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.data_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
-def main():    
-    # 创建UDP socket
-    client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        # 服务端地址
+        self.server_address = (SERVER_IP, SERVER_CONTROL_PORT)
 
-    # 服务端地址
-    server_address = (SERVER_IP, SERVER_PORT)
+    def exchange_info(self):
+        
+        for _ in range(RTT_SEND_TIME):
+            send_time = f'{time.time()}'
+            self.control_socket.sendto(send_time.encode(), self.server_address)
 
-    # 发送数据
-    message = "Hello, server!"
-    client_socket.sendto(message.encode(), server_address)
+    def close_socket(self):
+        # 关闭socket
+        self.control_socket.close()
+        self.data_socket.close()
+        
+def main():
 
-    # 接收响应
-    data, server_address = client_socket.recvfrom(1024)
-    print(f"从服务器收到响应: {data.decode()}")
-
-    # 关闭socket
-    client_socket.close()
-
+    client = Client()    
+    client.close_socket()
 
 if __name__ == "__main__":
     main()

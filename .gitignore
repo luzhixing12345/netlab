@@ -162,5 +162,4 @@ cython_debug/
 resources/
 docs/
 a.py
-Makefile
 *.bin
