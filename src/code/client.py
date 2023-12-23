@@ -17,9 +17,12 @@ class Client:
 
     def exchange_info(self):
         
-        for _ in range(RTT_SEND_TIME):
+        for i in range(RTT_SEND_TIME):
             send_time = f'{time.time()}'
             self.control_socket.sendto(send_time.encode(), self.server_address)
+            i += 1
+            print(f'send {i}/{RTT_SEND_TIME}')
+            
 
     def close_socket(self):
         # 关闭socket

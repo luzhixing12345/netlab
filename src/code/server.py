@@ -32,13 +32,13 @@ class Server:
         self.control_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         control_address = (SERVER_IP, SERVER_CONTROL_PORT)
         self.control_socket.bind(control_address)
-        print(f"UDP 服务端控制 socket 启动,监听 {control_address}")
+        print(f"UDP control socket start, listen {control_address}")
         
         self.data_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.data_socket.setsockopt(socket.SOL_SOCKET,socket.SO_SNDBUF, CHUNK_SIZE)
         data_address = (SERVER_IP, SERVER_DATA_PORT)
         self.data_socket.bind(data_address)
-        print(f"UDP 服务端数据 socket 启动,监听 {data_address}")
+        print(f"UDP data socket start, listen {data_address}")
         
         if ENABLE_PRE_ZIP:
             start_time = time.time()
@@ -82,10 +82,13 @@ class Server:
         通过 control_socket 计算当前网络的 RTT 大小
         '''
         rtts = []
-        for _ in range(RTT_SEND_TIME):
+        i = 0
+        while True:
             data, self.client_control_address = self.control_socket.recvfrom(1024)
-            receive_time = time.time()
-            rtts.append(2 * (receive_time - float(data.decode())))
+            # receive_time = time.time()
+            # rtts.append(2 * (receive_time - float(data.decode())))
+            i += 1
+            print(f"receive {i}/{RTT_SEND_TIME}")
         return sum(rtts)/len(rtts)
     
     def run(self):

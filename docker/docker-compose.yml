@@ -8,6 +8,10 @@ services:
       cs_network:
         ipv4_address: 202.100.10.2
     command: tail -f /dev/null
+    privileged: true
+    cap_add:
+      - NET_ADMIN
+      - SYS_ADMIN
 
   host2:
     image: alpine
@@ -16,6 +20,10 @@ services:
       cs_network:
         ipv4_address: 202.100.10.3
     command: tail -f /dev/null
+    privileged: true
+    cap_add:
+      - NET_ADMIN
+      - SYS_ADMIN
 
   host3:
     image: alpine
@@ -24,6 +32,10 @@ services:
       cs_network:
         ipv4_address: 202.100.10.4
     command: tail -f /dev/null
+    privileged: true
+    cap_add:
+      - NET_ADMIN
+      - SYS_ADMIN
 
 networks:
   cs_network:

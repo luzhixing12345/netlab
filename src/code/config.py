@@ -3,10 +3,10 @@ import lzma
 
 CLIENT_IP = "202.100.10.2"  # 客户端 IP, 其实没有必要确定, 也不应该知道
 SERVER_IP = "202.100.10.3"  # 服务端 IP
-SERVER_IP = "127.0.0.1"  # debug
+# SERVER_IP = "127.0.0.1"  # debug
 SERVER_CONTROL_PORT = 8000  # 服务端端口
 SERVER_DATA_PORT = 8001
-RTT_SEND_TIME = 5
+RTT_SEND_TIME = 500
 
 FILE_PATH = "output.bin"
 CHUNK_SIZE = 32 * 1024  # 32KB
