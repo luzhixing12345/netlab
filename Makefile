@@ -6,6 +6,7 @@ rsync:
 	docker cp src/code/config.py client:/root
 	docker cp src/code/server.py server:/root
 	docker cp src/code/config.py server:/root
+	docker cp src/chunk_generator.py server:/root
 	docker cp docker/tmux.sh monitor:/etc/
 	
 
