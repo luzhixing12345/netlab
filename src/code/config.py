@@ -27,11 +27,13 @@ ZIP_FILE_PATH = f"{FILE_PATH}.z"
 
 class TCPstatus(Enum):
     CLOSED = "CLOSED"
-    LISTENED = "LISTENED"
+    LISTEN = "LISTEN"
     SYN_SENT = "SYN_SENT"
     SYN_RCVD = "SYN_RCVD"
     ESTABLISHED = "ESTABLISHED"
 
+    # 新增的一个状态
+    RECEIVING_DATA = 'RECEIVING_DATA'
 
 # https://zhuanlan.zhihu.com/p/483856828
 TCP_SYN_RETIRES = 6  # 最多重发 6 次
