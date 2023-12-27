@@ -2,7 +2,7 @@ import socket
 import time
 from config import *
 import threading
-from typing import List
+from typing import List, Set, Tuple
 import struct
 import sys
 
@@ -11,12 +11,15 @@ FILE_DATA = []
 
 class Client:
     def __init__(self) -> None:
-        self.file_content = []  # 文件内容
         self.status = TCPstatus.CLOSED  # 客户端的状态, 仿照 TCP 三次握手
         self.rtt = 0
         self.package_received_number = 0
         self.ack_sent_number = 0
         self.init_socket()
+        self.init_thread()
+        
+        self.file_path = ZIP_FILE_PATH if ENABLE_PRE_ZIP else FILE_PATH
+        self.file_data_blocks: Set[Tuple[int, int]] = set()
 
     def run(self):
         self.establish_connection()
@@ -31,6 +34,16 @@ class Client:
         # 服务端地址
         self.server_address = (SERVER_IP, SERVER_CONTROL_PORT)
         self.data_socket.bind((CLIENT_IP, CLIENT_DATA_PORT))
+
+    def init_thread(self):
+        """
+        初始化所有接收线程
+        """
+        self.threads: List[threading.Thread] = []
+        for thread_id in range(CLIENT_RECEIVE_THREAD_NUMBER):
+            thread = threading.Thread(target=self.receive_package, args=(thread_id,))
+            thread.daemon = True
+            self.threads.append(thread)
 
     def establish_connection(self):
         """
@@ -57,7 +70,9 @@ class Client:
                 syn_ack_data = SYN_ACK_PATTERN.match(syn_ack_data.decode())
                 end_time = self.get_time()
                 self.rtt = end_time - start_time
-                self.log(f'receive SYN ACK, file size = [{syn_ack_data.group("filesize")}] rtt = [{self.rtt}]')
+                self.file_size = syn_ack_data.group("filesize")
+                self.log(f"receive SYN ACK, file size = [{self.file_size}] rtt = [{self.rtt}]")
+                self.create_empty_file()
                 break
             except socket.timeout:
                 # 如果超时, 超时时间翻倍, 重新设置
@@ -95,34 +110,66 @@ class Client:
             self.close_socket()
             exit(1)
 
+    def create_empty_file(self):
+        '''
+        创建一个大小为 filesize 的空文件, 以便后续的进程可以直接在对应位置写入
+        '''
+        
+        
+    def create_file_func(self):
+        with open(self.file_path, 'wb') as file:
+        # 将文件指针移动到指定大小
+            file.seek(self.file_size - 1)
+            # 写入一个空字节,这样文件就会扩展到指定大小
+            file.write(b'\0')
+
     def receive_data(self):
-        """ """
+        """
+        可以开始接收数据
+        """
         self.data_socket.settimeout(None)
-        self.threads: List[threading.Thread] = []
-        for thread_id in range(CLIENT_RECEIVE_THREAD_NUMBER):
-            thread = threading.Thread(target=self.receive_package, args=(thread_id,))
-            thread.daemon = True
+        for thread in self.threads:
             thread.start()
-            self.threads.append(thread)
 
     def receive_package(self, thread_id):
         """
-        每个线程执行的函数
+        从 data socket 接收数据, 从 control socket 发送 ACK, ACK 数据包格式如下
+
+        1                          4                          8
+        +--------------------------+--------------------------+
+        |                          |                          |
+        |       thread id          |      sequence number     |
+        |                          |                          |
+        +--------------------------+--------------------------+
+        |                                                     |
+        |                    receive time                     |
+        |                                                     |
+        +-----------------------------------------------------+
+
         """
         self.log(f"start listening thread")
         while True:
-            data, _ = self.data_socket.recvfrom(CHUNK_SIZE + 100)
+            package_data, _ = self.data_socket.recvfrom(CHUNK_SIZE + DATA_HEADER_SIZE)
             self.status = TCPstatus.RECEIVING_DATA
 
-            send_thread_id, sequence_number, timestamp = struct.unpack("!IId", data[:16])
-            self.log(f"{thread_id}: receive data {len(data)}")
+            send_thread_id, sequence_number, send_time, start_offset, block_size = struct.unpack(
+                "!IIdQQ", package_data[:DATA_HEADER_SIZE]
+            )
+            self.log(f"{thread_id}: receive data {len(package_data)}")
             self.package_received_number += 1
-            # message_content = data[16:].decode("utf-8")
-            # self.file_content.append(message_content)
-
-            ack_header = struct.pack("!IId", send_thread_id, sequence_number, self.get_time())
+            
+            data_block_id = (send_thread_id, sequence_number)
+            if data_block_id in self.file_data_blocks:
+                # 已经接收过了, 这是因为 ACK 数据包丢失重发的数据
+                self.log(f'already received')
+            else:
+                data = package_data[DATA_HEADER_SIZE:]
+                with open(self.file_path, 'wb') as f:
+                    ...
+            receive_time = self.get_time()
+            ack_header = struct.pack("!IId", send_thread_id, sequence_number, receive_time)
             self.control_socket.sendto(ack_header, self.server_address)
-            self.log(f"[{thread_id}] send ack {send_thread_id} {sequence_number} {timestamp}")
+            self.log(f"[{thread_id}] send ack {send_thread_id} {sequence_number} {send_time}")
             self.ack_sent_number += 1
 
     def close_socket(self):

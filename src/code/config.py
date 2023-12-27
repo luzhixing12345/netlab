@@ -16,6 +16,8 @@ SERVER_SEND_THREAD_NUMBER = 8
 SERVER_ACK_HANDLE_THREAD_NUMBER = 8
 CLIENT_RECEIVE_THREAD_NUMBER = 8
 
+# 见 server.py send_package 数据包头部格式
+DATA_HEADER_SIZE = 32
 
 ENABLE_PRE_ZIP = False  # 采用预先压缩
 
@@ -42,5 +44,9 @@ class TCPstatus(Enum):
 TCP_SYN_RETIRES = 6  # 最多重发 6 次
 TCP_SYN_TIMEOUT = 1  # SYN 的超时时间, 每次超时后翻倍
 
+# 三次握手的消息格式
 SYN_PATTERN = re.compile(r"SYN (?P<syn_number>\d+) (?P<time>\d+\.\d+)")
 SYN_ACK_PATTERN = re.compile(r"SYN ACK (?P<filesize>\d+)")
+# SYN_ACK_PATTERN = 'ACK'
+
+# 四次挥手的消息格式
