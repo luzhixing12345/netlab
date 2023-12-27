@@ -11,6 +11,8 @@ from typing import List, Dict
 class Server:
     def __init__(self) -> None:
         self.rtt = 0
+        self.package_sent_number = 0
+        self.ack_received_number = 0
         self.status = TCPstatus.CLOSED
 
         self.init_socket()
@@ -37,12 +39,19 @@ class Server:
 
         # 初始化计时器
         self.timers: Dict[int, Dict[int, float]] = {}
-        for thread_id in range(SEND_THREAD_NUMBER):
+        for thread_id in range(SERVER_SEND_THREAD_NUMBER):
             self.timers[thread_id] = {}
 
+    def run(self):
         self.establish_connection()
+        self.receive_ack()
         self.send_data()
-        self.handle_ack()
+        
+        for thread in self.receive_threads:
+            thread.join()
+            
+        for thread in self.send_threads:
+            thread.join()
 
     def init_socket(self):
         """
@@ -108,29 +117,30 @@ class Server:
         """
 
         # 计算每一个线程需要发送的文件大小, 如果不能整除的话采用四舍五入的方式
-        thread_send_size = int(round(self.file_size / SEND_THREAD_NUMBER))
-        self.threads: list[threading.Thread] = []
-        for thread_id in range(SEND_THREAD_NUMBER - 1):
+        thread_send_size = int(round(self.file_size / SERVER_SEND_THREAD_NUMBER))
+        self.send_threads: list[threading.Thread] = []
+        for thread_id in range(SERVER_SEND_THREAD_NUMBER - 1):
             thread = threading.Thread(target=self.read_and_send, args=(thread_id, thread_send_size))
-            self.threads.append(thread)
+            self.send_threads.append(thread)
 
         # 将剩余部分都放入最后一个线程发送
-        bias = thread_send_size * SEND_THREAD_NUMBER - self.file_size
+        bias = thread_send_size * SERVER_SEND_THREAD_NUMBER - self.file_size
         thread = threading.Thread(
             target=self.read_and_send,
             args=(
-                SEND_THREAD_NUMBER - 1,
+                SERVER_SEND_THREAD_NUMBER - 1,
                 thread_send_size - bias,
             ),
         )
-        self.threads.append(thread)
+        self.send_threads.append(thread)
 
-        for thread in self.threads:
+        for thread in self.send_threads:
             thread.start()
 
     def read_and_send(self, thread_id: int, thread_send_size: int):
         start_offset = thread_id * thread_send_size  # 起始偏移位置
         self.log(f"start sending thread {thread_id}")
+
         with open(self.file_path, "rb") as f:
             f.seek(start_offset)
 
@@ -139,7 +149,7 @@ class Server:
                 data = f.read(thread_send_size)
                 self.timers[thread_id][0] = self.get_time()
                 self.data_socket.sendto(data, self.client_address)
-                self.log(f"[{thread_id}] send data")
+                self.log(f"[{thread_id}] send data {len(data)}")
             else:
                 # 按照分块大小发送 n 次
                 n = thread_send_size // CHUNK_SIZE
@@ -149,25 +159,35 @@ class Server:
                     full_message = header + data
                     self.timers[thread_id][sequence_number] = self.get_time()
                     self.data_socket.sendto(full_message, self.client_address)
-                    self.log(f"[{thread_id}] send data {sequence_number}")
+                    self.log(f"[{thread_id}] send data {sequence_number}:{len(full_message)}")
+                    self.package_sent_number += 1
                 # 最后一次把 thread_send_size 剩余的部分都发过去
-                sequence_number = n - 1
-                data = f.read(thread_send_size - sequence_number * CHUNK_SIZE)
-                header = struct.pack("!IId", thread_id, sequence_number, self.get_time())
-                full_message = header + data
-                self.timers[thread_id][sequence_number] = self.get_time()
-                self.data_socket.sendto(data, self.client_address)
-                self.log(f"[{thread_id}] send data {sequence_number}")
+                # sequence_number = n - 1
+                # data = f.read(thread_send_size - sequence_number * CHUNK_SIZE)
+                # header = struct.pack("!IId", thread_id, sequence_number, self.get_time())
+                # full_message = header + data
+                # self.timers[thread_id][sequence_number] = self.get_time()
+                # self.data_socket.sendto(data, self.client_address)
+                # self.log(f"[{thread_id}] send data {sequence_number}")
 
-    def handle_ack(self):
+    def receive_ack(self):
+        self.receive_threads: List[threading.Thread] = []
+        self.control_socket.settimeout(None)
+        for thread_id in range(SERVER_ACK_HANDLE_THREAD_NUMBER):
+            thread = threading.Thread(target=self.handle_ack, args=(thread_id, ))
+            thread.daemon = True
+            thread.start()
+            self.receive_threads.append(thread)
+
+    def handle_ack(self, thread_id):
         """
         处理来自 client 的 ack 数据包
         """
-        self.control_socket.settimeout(None)
         while True:
             ack_data, _ = self.control_socket.recvfrom(1024)
-            thread_id, sequence_number, timestamp = struct.unpack("!IId", ack_data[:16])
-            self.log(f"receive {thread_id} {sequence_number}")
+            send_thread_id, sequence_number, timestamp = struct.unpack("!IId", ack_data[:16])
+            self.log(f"[{thread_id}] receive {send_thread_id} {sequence_number}")
+            self.ack_received_number += 1
 
     def close_socket(self):
         self.control_socket.close()
@@ -176,14 +196,24 @@ class Server:
     def log(self, info: str):
         sys.stderr.write(f"server: {info}\n")
 
+    def show_statistical_info(self):
+        self.log(f"send    {self.package_sent_number} packages")
+        self.log(f"receive {self.ack_received_number} acks")
+
     def get_time(self):
         return time.time()
 
 
 def main():
     server = Server()
-    server.close_socket()
-    print('over')
+    try:
+        server.run()
+    except KeyboardInterrupt as e:
+        print(e)
+        server.show_statistical_info()
+    finally:
+        server.close_socket()
+    print("over")
 
 
 if __name__ == "__main__":

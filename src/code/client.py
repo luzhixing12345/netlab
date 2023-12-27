@@ -14,9 +14,13 @@ class Client:
         self.file_content = []  # 文件内容
         self.status = TCPstatus.CLOSED  # 客户端的状态, 仿照 TCP 三次握手
         self.rtt = 0
+        self.package_received_number = 0
+        self.ack_sent_number = 0
         self.init_socket()
+
+    def run(self):
         self.establish_connection()
-        
+
         for thread in self.threads:
             thread.join()
 
@@ -95,8 +99,9 @@ class Client:
         """ """
         self.data_socket.settimeout(None)
         self.threads: List[threading.Thread] = []
-        for thread_id in range(RECEIVE_THREAD_NUMBER):
-            thread = threading.Thread(target=self.receive_package, args=(thread_id, ))
+        for thread_id in range(CLIENT_RECEIVE_THREAD_NUMBER):
+            thread = threading.Thread(target=self.receive_package, args=(thread_id,))
+            thread.daemon = True
             thread.start()
             self.threads.append(thread)
 
@@ -104,19 +109,21 @@ class Client:
         """
         每个线程执行的函数
         """
-        self.log(f'start listening thread')
+        self.log(f"start listening thread")
         while True:
-            data, _ = self.data_socket.recvfrom(CHUNK_SIZE + 16)
+            data, _ = self.data_socket.recvfrom(CHUNK_SIZE + 100)
             self.status = TCPstatus.RECEIVING_DATA
-            
+
             send_thread_id, sequence_number, timestamp = struct.unpack("!IId", data[:16])
             self.log(f"{thread_id}: receive data {len(data)}")
+            self.package_received_number += 1
             # message_content = data[16:].decode("utf-8")
             # self.file_content.append(message_content)
 
             ack_header = struct.pack("!IId", send_thread_id, sequence_number, self.get_time())
             self.control_socket.sendto(ack_header, self.server_address)
             self.log(f"[{thread_id}] send ack {send_thread_id} {sequence_number} {timestamp}")
+            self.ack_sent_number += 1
 
     def close_socket(self):
         # 关闭socket
@@ -126,14 +133,25 @@ class Client:
     def log(self, info: str):
         sys.stderr.write(f"client: {info}\n")
 
+    def show_statistical_info(self):
+        self.log(f"receive {self.package_received_number} packages")
+        self.log(f"sent    {self.ack_sent_number} acks")
+
     def get_time(self):
         return time.time()
 
 
 def main():
     client = Client()
-    client.close_socket()
-    print('over')
+    try:
+        client.run()
+    except KeyboardInterrupt as e:
+        print(e)
+        client.show_statistical_info()
+    finally:
+        client.close_socket()
+    print("over")
+
 
 if __name__ == "__main__":
     main()
