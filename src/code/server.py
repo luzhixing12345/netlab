@@ -6,7 +6,7 @@ from config import *
 import struct
 import sys
 from typing import List, Dict
-
+import hashlib
 
 class PackageInfo:
     def __init__(self, send_time: float, seek_pos: int, package_size: int) -> None:
@@ -75,9 +75,10 @@ class Server:
         self.control_socket.bind(control_address)
         print(f"UDP control socket start, listen {control_address}")
 
+        # 发送端的发送缓冲区设置为最大
         self.data_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.data_socket.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, MAX_UDP_BUFFER_SIZE)
         self.client_address = (CLIENT_IP, CLIENT_DATA_PORT)
-        # self.data_socket.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, CHUNK_SIZE)
         print("UDP data socket start, waiting for client...")
 
     def init_thread(self):
@@ -174,15 +175,7 @@ class Server:
         |                            |                          |
         +----------------------------+--------------------------+
         |                                                       |
-        |                        send time                      |
-        |                                                       |
-        +-------------------------------------------------------+
-        |                                                       |
         |                      start offset                     |
-        |                                                       |
-        +-------------------------------------------------------+
-        |                                                       |
-        |                      block size                       |
         |                                                       |
         +-------------------------------------------------------+
         |                                                       |
@@ -199,9 +192,9 @@ class Server:
             # 如果小于分块大小, 直接一次性发送过去
             if thread_send_size <= CHUNK_SIZE:
                 data = f.read(thread_send_size)
-                send_time = self.get_time()  # 发送时间
-                header = struct.pack("!IIdQQ", thread_id, sequence_number, send_time, start_offset, thread_send_size)
+                header = struct.pack("!IIQ", thread_id, sequence_number, start_offset)
                 full_message = header + data
+                send_time = self.get_time()
                 self.data_socket.sendto(full_message, self.client_address)
 
                 self.log(f"[{thread_id}] send data {len(data)}")
@@ -215,8 +208,6 @@ class Server:
                 n = thread_send_size // CHUNK_SIZE
                 for sequence_number in range(n):
                     # 发送的文件内容数据
-                    data = f.read(CHUNK_SIZE)
-                    send_time = self.get_time()  # 发送时间
                     seek_pos = start_offset + sequence_number * CHUNK_SIZE  # 文件偏移量
 
                     if sequence_number == n - 1:
@@ -224,9 +215,12 @@ class Server:
                         package_size = thread_send_size - sequence_number * CHUNK_SIZE
                     else:
                         package_size = CHUNK_SIZE  # 数据块大小
-                    header = struct.pack("!IIdQQ", thread_id, sequence_number, send_time, seek_pos, package_size)
+                    
+                    data = f.read(package_size)    
+                    header = struct.pack("!IIQ", thread_id, sequence_number, seek_pos)
 
                     full_message = header + data
+                    send_time = self.get_time()  # 发送时间
                     self.data_socket.sendto(full_message, self.client_address)
 
                     self.log(f"[{thread_id}] send data {sequence_number}:{len(full_message)}")
@@ -278,6 +272,12 @@ class Server:
     def get_time(self):
         return time.time()
 
+    def calculate_md5(self, block_size=8192):
+        md5_hash = hashlib.md5()
+        with open(self.file_path, "rb") as file:
+            for chunk in iter(lambda: file.read(block_size), b""):
+                md5_hash.update(chunk)
+        print(f'md5: {md5_hash.hexdigest()}')
 
 def main():
     server = Server()
@@ -286,6 +286,7 @@ def main():
     except KeyboardInterrupt as e:
         print(e)
         server.show_statistical_info()
+        server.calculate_md5()
     finally:
         server.close_socket()
     print("over")
