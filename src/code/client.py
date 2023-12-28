@@ -6,13 +6,14 @@ from typing import List, Set, Tuple
 import struct
 import hashlib
 import sys
+from queue import Queue
 
 
 class ClientInfo:
     package_received_number = 0  # 接收到的有效数据包的个数(不包含重复接收的数据包)
     package_duplicated_number = 0  # 重复接收的数据包的个数
     ack_sent_number = 0  # 发送的 ACK 个数
-
+    write_data_number = 0
 
 class Client:
     def __init__(self) -> None:
@@ -27,7 +28,10 @@ class Client:
     def run(self):
         self.establish_connection()
 
-        for thread in self.threads:
+        for thread in self.write_threads:
+            thread.join()
+
+        for thread in self.receive_threads:
             thread.join()
 
     def init_socket(self):
@@ -43,11 +47,32 @@ class Client:
         """
         初始化所有接收线程
         """
-        self.threads: List[threading.Thread] = []
+        self.receive_threads: List[threading.Thread] = []  # 接收线程
+        self.write_threads: List[threading.Thread] = []  # 写文件线程
+
+        data_queue = Queue()
+
         for thread_id in range(CLIENT_RECEIVE_THREAD_NUMBER):
-            thread = threading.Thread(target=self.receive_package, args=(thread_id,))
+            thread = threading.Thread(
+                target=self.receive_package,
+                args=(
+                    thread_id,
+                    data_queue,
+                ),
+            )
             thread.daemon = True
-            self.threads.append(thread)
+            self.receive_threads.append(thread)
+
+        for thread_id in range(CLIENT_WRITE_THEAD_NUMBER):
+            thread = threading.Thread(
+                target=self.write_data,
+                args=(
+                    thread_id,
+                    data_queue,
+                ),
+            )
+            thread.daemon = True
+            self.write_threads.append(thread)
 
     def establish_connection(self):
         """
@@ -137,11 +162,15 @@ class Client:
         # 等待创建文件的进程结束
         self.create_file_thread.join()
 
-        self.data_socket.settimeout(None)
-        for thread in self.threads:
+        # 先启动写线程
+        for thread in self.write_threads:
             thread.start()
 
-    def receive_package(self, thread_id):
+        self.data_socket.settimeout(None)            
+        for thread in self.receive_threads:
+            thread.start()
+
+    def receive_package(self, thread_id: int, data_queue: Queue):
         """
         从 data socket 接收数据, 从 control socket 发送 ACK, ACK 数据包格式如下
 
@@ -155,11 +184,10 @@ class Client:
         |                    receive time                     |
         |                                                     |
         +-----------------------------------------------------+
-
         """
         self.log(f"start listening thread")
         while True:
-            package_data, _ = self.data_socket.recvfrom(CHUNK_SIZE + DATA_HEADER_SIZE)
+            package_data, _ = self.data_socket.recvfrom(CHUNK_SIZE * 2)
             self.status = TCPstatus.RECEIVING_DATA
 
             send_thread_id, sequence_number, start_offset = struct.unpack("!IIQ", package_data[:DATA_HEADER_SIZE])
@@ -185,14 +213,22 @@ class Client:
                 self.control_socket.sendto(ack_header, self.server_address)
 
                 data = package_data[DATA_HEADER_SIZE:]
-                # 以覆盖的方式写入文件对应的位置
-                with open(self.file_path, "rb+") as f:
-                    f.seek(start_offset)
-                    f.write(data)
+                data_queue.put((start_offset, data))
 
                 self.log(f"[{thread_id}] send ack")
                 self.info.package_received_number += 1
                 self.info.ack_sent_number += 1
+
+    def write_data(self, thread_id: int, data_queue: Queue):
+        """ """
+        # 以覆盖的方式写入文件对应的位置
+        while True:
+            start_offset, data = data_queue.get()
+            self.log(f'write {start_offset} {len(data)}')
+            with open(self.file_path, "rb+") as f:
+                f.seek(start_offset)
+                f.write(data)
+            self.info.write_data_number += 1
 
     def close_socket(self):
         # 关闭socket
@@ -203,8 +239,10 @@ class Client:
         sys.stderr.write(f"client: {info}\n")
 
     def show_statistical_info(self):
-        self.log(f"receive {self.info.package_received_number} packages")
-        self.log(f"sent    {self.info.ack_sent_number} acks")
+        self.log(f"receive packages: {self.info.package_received_number}")
+        self.log(f'duplicate packages: {self.info.package_duplicated_number}')
+        self.log(f"sent acks: {self.info.ack_sent_number}")
+        self.log(f'write data: {self.info.write_data_number}')
 
     def get_time(self):
         return time.time()

@@ -14,12 +14,16 @@ class PackageInfo:
         self.seek_pos: int = seek_pos  # 偏移量
         self.package_size: int = package_size  # 包大小
 
+class ServerInfo:
+    package_sent_number = 0 # 发送的数据包个数
+    ack_received_number = 0 # 接收到的 ACK 个数
 
 class Server:
     def __init__(self) -> None:
         self.rtt = 0
-        self.package_sent_number = 0
-        self.ack_received_number = 0
+        self.info = ServerInfo()
+        self.info.package_sent_number = 0
+        self.info.ack_received_number = 0
         self.status = TCPstatus.CLOSED
 
         self.init_socket()
@@ -224,7 +228,7 @@ class Server:
                     self.data_socket.sendto(full_message, self.client_address)
 
                     self.log(f"[{thread_id}] send data {sequence_number}:{len(full_message)}")
-                    self.package_sent_number += 1
+                    self.info.package_sent_number += 1
                     # 添加一个定时器
                     self.timers[thread_id][sequence_number] = PackageInfo(
                         send_time=send_time,
@@ -249,7 +253,7 @@ class Server:
             ack_data, _ = self.control_socket.recvfrom(1024)
             send_thread_id, sequence_number, timestamp = struct.unpack("!IId", ack_data[:16])
             self.log(f"[{thread_id}] receive {send_thread_id} {sequence_number}")
-            self.ack_received_number += 1
+            self.info.ack_received_number += 1
 
     def check_timer_arrival(self):
         '''
@@ -266,8 +270,9 @@ class Server:
         sys.stderr.write(f"server: {info}\n")
 
     def show_statistical_info(self):
-        self.log(f"send    {self.package_sent_number} packages")
-        self.log(f"receive {self.ack_received_number} acks")
+        self.log(f"send packages: {self.info.package_sent_number}")
+        self.log(f"receive acks: {self.info.ack_received_number}")
+        self.log(f'package loss: {round((self.info.package_sent_number - self.info.ack_received_number)/self.info.package_sent_number, 2)}')
 
     def get_time(self):
         return time.time()

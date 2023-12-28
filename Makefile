@@ -22,5 +22,10 @@ restart:
 	docker exec -it server /usr/sbin/sshd
 	docker exec -it monitor /usr/sbin/sshd
 
+ssh:
+	docker exec -it client /usr/sbin/sshd
+	docker exec -it server /usr/sbin/sshd
+	docker exec -it monitor /usr/sbin/sshd
+
 run:
 	docker exec -it monitor sh /etc/tmux.sh
