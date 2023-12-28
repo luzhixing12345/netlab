@@ -5,8 +5,10 @@ import time
 from config import *
 import struct
 import sys
-from typing import List, Dict
+from typing import List, Dict, Tuple
 import hashlib
+from queue import Queue
+
 
 class PackageInfo:
     def __init__(self, send_time: float, seek_pos: int, package_size: int) -> None:
@@ -14,9 +16,14 @@ class PackageInfo:
         self.seek_pos: int = seek_pos  # 偏移量
         self.package_size: int = package_size  # 包大小
 
+
 class ServerInfo:
-    package_sent_number = 0 # 发送的数据包个数
-    ack_received_number = 0 # 接收到的 ACK 个数
+    package_sent_number = 0  # 发送的数据包个数
+    ack_received_number = 0  # 接收到的 ACK 个数
+    rtt_increase_count = 0  # RTT 向上调整的次数
+    rtt_decrease_count = 0  # RTT 向下调整的次数
+    timeout_count = 0
+
 
 class Server:
     def __init__(self) -> None:
@@ -28,7 +35,6 @@ class Server:
 
         self.init_socket()
         self.status = TCPstatus.LISTEN
-        
 
         # 确定发送文件是否压缩
         if ENABLE_PRE_ZIP:
@@ -53,7 +59,7 @@ class Server:
         self.timers: Dict[int, Dict[int, PackageInfo]] = {}
         for thread_id in range(SERVER_SEND_THREAD_NUMBER):
             self.timers[thread_id] = {}
-            
+
         self.init_thread()
 
     def run(self):
@@ -66,6 +72,8 @@ class Server:
 
         for thread in self.send_threads:
             thread.join()
+            
+        # self.timer_checker.join()
 
     def init_socket(self):
         """
@@ -86,15 +94,14 @@ class Server:
         print("UDP data socket start, waiting for client...")
 
     def init_thread(self):
-        '''
+        """
         初始化所有线程, 但并不执行
-        '''
-        
-        self.send_threads: list[threading.Thread] = [] # 发送线程
-        self.receive_threads: List[threading.Thread] = [] # 接收 ACK 线程
-        self.timer_checker = threading.Thread(target=self.check_timer_arrival, args=()) # 定时器检查线程
-        self.timer_checker.daemon = True
-        
+        """
+        self.send_threads: list[threading.Thread] = []  # 发送线程
+        self.receive_threads: List[threading.Thread] = []  # 接收 ACK 线程
+        # self.timer_checker = threading.Thread(target=self.check_timer_arrival, args=())  # 定时器检查线程
+        # self.timer_checker.daemon = True
+
         # 初始化发送线程
         # 计算每一个线程需要发送的文件大小, 如果不能整除的话采用四舍五入的方式
         thread_send_size = int(round(self.file_size / SERVER_SEND_THREAD_NUMBER))
@@ -113,17 +120,20 @@ class Server:
         )
         thread.daemon = True
         self.send_threads.append(thread)
-        
+
         # 初始化接收线程
         for thread_id in range(SERVER_ACK_HANDLE_THREAD_NUMBER):
             thread = threading.Thread(target=self.handle_ack, args=(thread_id,))
             thread.daemon = True
             self.receive_threads.append(thread)
 
+        # (seek_pos, package_size)
+        self.data_queue = Queue()
+
     def establish_connection(self):
         """
         三次握手建立连接
-        
+
         初步计算 RTT 时延, 告知 client 传输文件大小
         """
         syn_data, _ = self.control_socket.recvfrom(1024)
@@ -165,13 +175,16 @@ class Server:
         """
         所有发送线程都可以开始发送数据了
         """
+        # 启动定时器线程
+        # self.timer_checker.start()
+        # 启动所有发送线程
         for thread in self.send_threads:
             thread.start()
 
     def send_package(self, thread_id: int, thread_send_size: int):
-        '''
+        """
         每个线程根据偏移量分块发送
-        
+
         1                            4                          8
         +----------------------------+--------------------------+
         |                            |                          |
@@ -179,14 +192,14 @@ class Server:
         |                            |                          |
         +----------------------------+--------------------------+
         |                                                       |
-        |                      start offset                     |
+        |                        seek pos                       |
         |                                                       |
         +-------------------------------------------------------+
         |                                                       |
         |                         data                          |
         |                                                       |
         +-------------------------------------------------------+
-        '''
+        """
         start_offset = thread_id * thread_send_size  # 起始偏移位置
         self.log(f"start sending thread {thread_id}")
 
@@ -219,8 +232,8 @@ class Server:
                         package_size = thread_send_size - sequence_number * CHUNK_SIZE
                     else:
                         package_size = CHUNK_SIZE  # 数据块大小
-                    
-                    data = f.read(package_size)    
+
+                    data = f.read(package_size)
                     header = struct.pack("!IIQ", thread_id, sequence_number, seek_pos)
 
                     full_message = header + data
@@ -243,7 +256,6 @@ class Server:
         self.control_socket.settimeout(None)
         for thread in self.receive_threads:
             thread.start()
-        self.timer_checker.start()
 
     def handle_ack(self, thread_id):
         """
@@ -251,16 +263,45 @@ class Server:
         """
         while True:
             ack_data, _ = self.control_socket.recvfrom(1024)
-            send_thread_id, sequence_number, timestamp = struct.unpack("!IId", ack_data[:16])
+            send_thread_id, sequence_number = struct.unpack("!II", ack_data[:8])
+
+            # 拥塞控制
+            # 根据数据包的往返 RTT 来判断当前 RTT 是否需要改变
+            package_rtt = self.get_time() - self.timers[send_thread_id][sequence_number].send_time
+            if package_rtt > self.rtt * MAX_RTT_MULTIPLIER:
+                self.rtt = package_rtt
+                self.info.rtt_increase_count += 1
+            elif package_rtt < self.rtt / MAX_RTT_MULTIPLIER:
+                self.rtt = package_rtt
+                self.info.rtt_decrease_count += 1
+
+            # 收到 ACK 之后清除定时器
+            del self.timers[send_thread_id][sequence_number]
+
             self.log(f"[{thread_id}] receive {send_thread_id} {sequence_number}")
             self.info.ack_received_number += 1
 
     def check_timer_arrival(self):
-        '''
+        """
         检查
-        '''
-        self.log('init timer checker')
-        
+        """
+        self.log("init timer checker")
+        while True:
+            time.sleep(self.rtt)
+            current_time = self.get_time()
+            timeout_packages: List[Tuple[int, int]] = []
+            for thread_id, timers in self.timers.items():
+                for sequence_number, package_info in timers.items():
+                    if current_time - package_info.send_time > self.rtt * MAX_RTT_MULTIPLIER:
+                        # 超时重发
+                        timeout_packages.append((thread_id, sequence_number))
+                        self.data_queue.put((package_info.seek_pos, package_info.package_size))
+                        self.log(f"timeout!")
+                        self.info.timeout_count += 1
+            
+            # 最后一起清除定时器, 避免对于迭代器的影响
+            for (thread_id, sequence_number) in timeout_packages:
+                del self.timers[thread_id][sequence_number]
 
     def close_socket(self):
         self.control_socket.close()
@@ -272,7 +313,13 @@ class Server:
     def show_statistical_info(self):
         self.log(f"send packages: {self.info.package_sent_number}")
         self.log(f"receive acks: {self.info.ack_received_number}")
-        self.log(f'package loss: {round((self.info.package_sent_number - self.info.ack_received_number)/self.info.package_sent_number, 2)}')
+        self.log(
+            f"package loss: {round((self.info.package_sent_number - self.info.ack_received_number)/self.info.package_sent_number, 3) * 100}%"
+        )
+        self.log(f'rtt: {self.rtt}')
+        self.log(f"rtt increase time: {self.info.rtt_increase_count}")
+        self.log(f"rtt decrease time: {self.info.rtt_decrease_count}")
+        self.log(f'timeout count: {self.info.timeout_count}')
 
     def get_time(self):
         return time.time()
@@ -282,7 +329,8 @@ class Server:
         with open(self.file_path, "rb") as file:
             for chunk in iter(lambda: file.read(block_size), b""):
                 md5_hash.update(chunk)
-        print(f'md5: {md5_hash.hexdigest()}')
+        print(f"md5: {md5_hash.hexdigest()}")
+
 
 def main():
     server = Server()

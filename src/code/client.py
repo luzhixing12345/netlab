@@ -15,6 +15,7 @@ class ClientInfo:
     ack_sent_number = 0  # 发送的 ACK 个数
     write_data_number = 0
 
+
 class Client:
     def __init__(self) -> None:
         self.info = ClientInfo()
@@ -50,15 +51,13 @@ class Client:
         self.receive_threads: List[threading.Thread] = []  # 接收线程
         self.write_threads: List[threading.Thread] = []  # 写文件线程
 
-        data_queue = Queue()
+        # (seek_pos, data)
+        self.data_queue = Queue()
 
         for thread_id in range(CLIENT_RECEIVE_THREAD_NUMBER):
             thread = threading.Thread(
                 target=self.receive_package,
-                args=(
-                    thread_id,
-                    data_queue,
-                ),
+                args=(thread_id,),
             )
             thread.daemon = True
             self.receive_threads.append(thread)
@@ -66,10 +65,7 @@ class Client:
         for thread_id in range(CLIENT_WRITE_THEAD_NUMBER):
             thread = threading.Thread(
                 target=self.write_data,
-                args=(
-                    thread_id,
-                    data_queue,
-                ),
+                args=(thread_id,),
             )
             thread.daemon = True
             self.write_threads.append(thread)
@@ -166,11 +162,11 @@ class Client:
         for thread in self.write_threads:
             thread.start()
 
-        self.data_socket.settimeout(None)            
+        self.data_socket.settimeout(None)
         for thread in self.receive_threads:
             thread.start()
 
-    def receive_package(self, thread_id: int, data_queue: Queue):
+    def receive_package(self, thread_id: int):
         """
         从 data socket 接收数据, 从 control socket 发送 ACK, ACK 数据包格式如下
 
@@ -180,17 +176,13 @@ class Client:
         |       thread id          |      sequence number     |
         |                          |                          |
         +--------------------------+--------------------------+
-        |                                                     |
-        |                    receive time                     |
-        |                                                     |
-        +-----------------------------------------------------+
         """
         self.log(f"start listening thread")
         while True:
             package_data, _ = self.data_socket.recvfrom(CHUNK_SIZE * 2)
             self.status = TCPstatus.RECEIVING_DATA
 
-            send_thread_id, sequence_number, start_offset = struct.unpack("!IIQ", package_data[:DATA_HEADER_SIZE])
+            send_thread_id, sequence_number, seek_pos = struct.unpack("!IIQ", package_data[:DATA_HEADER_SIZE])
 
             data_block_id = (send_thread_id, sequence_number)
             if data_block_id in self.file_data_blocks:
@@ -208,25 +200,24 @@ class Client:
                 self.file_data_blocks.add(data_block_id)
 
                 # 先回复 ACK 包再写入
-                receive_time = self.get_time()
-                ack_header = struct.pack("!IId", send_thread_id, sequence_number, receive_time)
+                ack_header = struct.pack("!II", send_thread_id, sequence_number)
                 self.control_socket.sendto(ack_header, self.server_address)
 
                 data = package_data[DATA_HEADER_SIZE:]
-                data_queue.put((start_offset, data))
+                self.data_queue.put((seek_pos, data))
 
                 self.log(f"[{thread_id}] send ack")
                 self.info.package_received_number += 1
                 self.info.ack_sent_number += 1
 
-    def write_data(self, thread_id: int, data_queue: Queue):
+    def write_data(self, thread_id: int):
         """ """
         # 以覆盖的方式写入文件对应的位置
         while True:
-            start_offset, data = data_queue.get()
-            self.log(f'write {start_offset} {len(data)}')
+            seek_pos, data = self.data_queue.get()
+            self.log(f"write {seek_pos} {len(data)}")
             with open(self.file_path, "rb+") as f:
-                f.seek(start_offset)
+                f.seek(seek_pos)
                 f.write(data)
             self.info.write_data_number += 1
 
@@ -240,9 +231,9 @@ class Client:
 
     def show_statistical_info(self):
         self.log(f"receive packages: {self.info.package_received_number}")
-        self.log(f'duplicate packages: {self.info.package_duplicated_number}')
+        self.log(f"duplicate packages: {self.info.package_duplicated_number}")
         self.log(f"sent acks: {self.info.ack_sent_number}")
-        self.log(f'write data: {self.info.write_data_number}')
+        self.log(f"write data: {self.info.write_data_number}")
 
     def get_time(self):
         return time.time()

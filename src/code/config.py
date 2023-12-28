@@ -9,6 +9,7 @@ SERVER_IP = "202.100.10.3"  # 服务端 IP
 SERVER_CONTROL_PORT = 8000  # 服务端端口
 CLIENT_DATA_PORT = 8001
 RTT_SEND_TIME = 5
+MAX_RTT_MULTIPLIER = 5 # 超过 RTT 的时间倍数, 确定丢包后重传
 
 FILE_PATH = "output.bin"
 CHUNK_SIZE = 32 * 1024  # 32KB
