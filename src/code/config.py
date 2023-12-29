@@ -3,13 +3,18 @@ import lzma
 from enum import Enum
 import re
 
+LOG_MODE = 'DEBUG'
+LOG_MODE = 'INFO'
+
 CLIENT_IP = "202.100.10.2"  # 客户端 IP, 其实没有必要确定, 也不应该知道
 SERVER_IP = "202.100.10.3"  # 服务端 IP
 # SERVER_IP = "127.0.0.1"  # debug
 SERVER_CONTROL_PORT = 8000  # 服务端端口
 CLIENT_DATA_PORT = 8001
 RTT_SEND_TIME = 5
-MAX_RTT_MULTIPLIER = 5 # 超过 RTT 的时间倍数, 确定丢包后重传
+
+ADJUST_RTT_THRESHOLD = 5
+MAX_RTT_MULTIPLIER = 10 # 超过 RTT 的时间倍数, 确定丢包后重传
 
 FILE_PATH = "output.bin"
 CHUNK_SIZE = 32 * 1024  # 32KB
@@ -53,6 +58,7 @@ TCP_SYN_TIMEOUT = 1  # SYN 的超时时间, 每次超时后翻倍
 SYN_PATTERN = re.compile(r"SYN (?P<syn_number>\d+) (?P<time>\d+\.\d+)")
 SYN_ACK_PATTERN = re.compile(r"SYN ACK (?P<filesize>\d+)")
 # SYN_ACK_PATTERN = 'ACK'
+TIMER_KEY_PATTERN = re.compile(r'(?P<thread_id>\d+)_(?P<sequence_number>\d+)')
 
 # 四次挥手的消息格式
 

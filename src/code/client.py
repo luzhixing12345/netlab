@@ -24,7 +24,9 @@ class Client:
         self.init_thread()
 
         self.file_path = ZIP_FILE_PATH if ENABLE_PRE_ZIP else FILE_PATH
-        self.file_data_blocks: Set[Tuple[int, int]] = set()
+        self.data_block_set: Set[Tuple[int, int]] = set()
+        self.file_size = 0  # 三次握手建立连接的时候会从服务端拿到
+        # self.max_package_count = 0  # 可以通过 file_size 和配置信息计算出来一共需要多少数据包
 
     def run(self):
         self.establish_connection()
@@ -34,6 +36,8 @@ class Client:
 
         for thread in self.receive_threads:
             thread.join()
+
+        # self.log('finish transport')
 
     def init_socket(self):
         self.control_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -96,8 +100,8 @@ class Client:
                 syn_ack_data = SYN_ACK_PATTERN.match(syn_ack_data.decode())
                 end_time = self.get_time()
                 RTT = end_time - start_time
-                self.file_size = syn_ack_data.group("filesize")
-                self.log(f"receive SYN ACK, file size = [{self.file_size}] rtt = [{RTT}]")
+                self.file_size = int(syn_ack_data.group("filesize"))
+                self.log(f"receive SYN ACK")
                 self.create_empty_file()
                 break
             except socket.timeout:
@@ -123,6 +127,7 @@ class Client:
             self.log("send ACK")
             time.sleep(tcp_ack_timeout)
             if self.status == TCPstatus.RECEIVING_DATA:
+                self.log('successfully build connection')
                 break
             else:
                 # 如果超时, 超时时间翻倍, 重新设置
@@ -139,10 +144,15 @@ class Client:
         """
         创建一个大小为 filesize 的空文件, 以便后续的进程可以直接在对应位置写入
         """
-        assert self.file_size != 0
         self.create_file_thread = threading.Thread(target=self.init_file, args=())
         self.create_file_thread.daemon = True
         self.create_file_thread.start()
+
+        # 总共需要收的包数量 = 线程数 * (每个线程需要发的包数量 = 每个线程需要发的包大小//分块大小)
+        self.max_package_count = SERVER_SEND_THREAD_NUMBER * (
+            int(round(self.file_size / SERVER_SEND_THREAD_NUMBER)) // CHUNK_SIZE
+        )
+        self.log(f'max: {self.max_package_count}')
 
     def init_file(self):
         with open(self.file_path, "wb") as file:
@@ -177,7 +187,7 @@ class Client:
         |                          |                          |
         +--------------------------+--------------------------+
         """
-        self.log(f"start listening thread")
+        self.debug(f"start listening thread")
         while True:
             package_data, _ = self.data_socket.recvfrom(CHUNK_SIZE * 2)
             self.status = TCPstatus.RECEIVING_DATA
@@ -185,19 +195,18 @@ class Client:
             send_thread_id, sequence_number, seek_pos = struct.unpack("!IIQ", package_data[:DATA_HEADER_SIZE])
 
             data_block_id = (send_thread_id, sequence_number)
-            if data_block_id in self.file_data_blocks:
+            if data_block_id in self.data_block_set:
                 # 已经接收过了, 这是因为ACK 数据包丢失重发的数据
                 # ACK 丢包说明网络环境可能不太好, 多次重发 ACK 数据包通知 server 数据已到达
                 for _ in range(MAX_ACK_RETRIES):
-                    receive_time = self.get_time()
-                    ack_header = struct.pack("!IId", send_thread_id, sequence_number, receive_time)
+                    ack_header = struct.pack("!II", send_thread_id, sequence_number)
                     self.control_socket.sendto(ack_header, self.server_address)
 
-                self.log(f"data already received, send {MAX_ACK_RETRIES} acks")
+                self.debug(f"data already received, send {MAX_ACK_RETRIES} acks")
                 self.info.package_duplicated_number += 1
             else:
                 # 正常接收的数据
-                self.file_data_blocks.add(data_block_id)
+                self.data_block_set.add(data_block_id)
 
                 # 先回复 ACK 包再写入
                 ack_header = struct.pack("!II", send_thread_id, sequence_number)
@@ -209,13 +218,18 @@ class Client:
                 self.log(f"[{thread_id}] send ack")
                 self.info.package_received_number += 1
                 self.info.ack_sent_number += 1
+                
+            if self.info.ack_sent_number == self.max_package_count:
+                self.log('finished')
 
     def write_data(self, thread_id: int):
         """ """
         # 以覆盖的方式写入文件对应的位置
         while True:
             seek_pos, data = self.data_queue.get()
-            self.log(f"write {seek_pos} {len(data)}")
+            if seek_pos is None and data is None:
+                break
+            self.debug(f"write {seek_pos} {len(data)}")
             with open(self.file_path, "rb+") as f:
                 f.seek(seek_pos)
                 f.write(data)
@@ -226,8 +240,12 @@ class Client:
         self.control_socket.close()
         self.data_socket.close()
 
+    def debug(self, info: str):
+        if LOG_MODE == "DEBUG":
+            print(f"client: {info}")
+
     def log(self, info: str):
-        sys.stderr.write(f"client: {info}\n")
+        print(f"client: {info}")
 
     def show_statistical_info(self):
         self.log(f"receive packages: {self.info.package_received_number}")
@@ -239,11 +257,12 @@ class Client:
         return time.time()
 
     def calculate_md5(self, block_size=8192):
+        self.log('calculating md5...')
         md5_hash = hashlib.md5()
         with open(self.file_path, "rb") as file:
             for chunk in iter(lambda: file.read(block_size), b""):
                 md5_hash.update(chunk)
-        print(f"md5: {md5_hash.hexdigest()}")
+        self.log(f"md5: {md5_hash.hexdigest()}")
 
 
 def main():
@@ -252,9 +271,9 @@ def main():
         client.run()
     except KeyboardInterrupt as e:
         print(e)
+    finally:
         client.show_statistical_info()
         client.calculate_md5()
-    finally:
         client.close_socket()
     print("over")
 
