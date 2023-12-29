@@ -11,3 +11,6 @@ build:
 clean:
 	docker stop $(DOCKER_CONTAINER_NAME) && docker rm $(DOCKER_CONTAINER_NAME)
 	docker network rm $(DOCKER_NETWORK_NAME)
+
+chunk:
+	python chunk_generator.py -s 1 generate_random_char
