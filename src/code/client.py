@@ -34,10 +34,11 @@ class Client:
         #     thread.join()
         
         # for thread in self.receive_threads:
-        #     thread.join()        
+        #     thread.join()
         # self.log('finish transport')
         self.finish_event.wait()
-
+        self.statistic_thread.join()
+        self.close_connection()
     def init_socket(self):
         self.control_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.data_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -107,6 +108,7 @@ class Client:
                 end_time = self.get_time()
                 RTT = end_time - start_time
                 self.file_size = int(syn_ack_data.group("filesize"))
+                self.max_package_count = int(syn_ack_data.group('max_package_count'))
                 self.log(f"receive SYN ACK")
                 self.create_empty_file()
                 break
@@ -155,9 +157,6 @@ class Client:
         self.create_file_thread.start()
 
         # 总共需要收的包数量 = 线程数 * (每个线程需要发的包数量 = 每个线程需要发的包大小//分块大小)
-        self.max_package_count = SERVER_SEND_THREAD_NUMBER * (
-            int(round(self.file_size / SERVER_SEND_THREAD_NUMBER)) // CHUNK_SIZE
-        )
         self.log(f'max: {self.max_package_count}')
 
     def init_file(self):
@@ -200,7 +199,7 @@ class Client:
         """
         self.debug(f"start listening thread")
         while True:
-            package_data, _ = self.data_socket.recvfrom(CHUNK_SIZE * 2)
+            package_data, _ = self.data_socket.recvfrom(CHUNK_SIZE * 2 + DATA_HEADER_SIZE)
             self.status = TCPstatus.RECEIVING_DATA
             self.debug('receive data')
 
@@ -232,10 +231,6 @@ class Client:
                 self.debug(f"[{thread_id}] send ack")
                 self.info.package_received_count += 1
                 self.info.ack_sent_count += 1
-                
-            if self.info.write_data_count == self.max_package_count:
-                self.log('finished')
-                self.finish_event.set()
 
     def write_data(self, thread_id: int):
         """ """
@@ -254,6 +249,30 @@ class Client:
             self.log('-' * 20)
             self.show_statistical_info()
             self.log('-' * 20)
+            
+            if self.info.write_data_count >= self.max_package_count:
+                self.log('all data received')
+                self.finish_event.set()
+                break
+    
+    def close_connection(self):
+        """
+        通知 server 已经收到所有数据, 停止发送
+        
+        这里简化处理, 直接发送 FIN 包, 发完后直接关闭 socket, 这样 server 收到 FIN 包后直接关闭 socket 即可
+        """        
+        for _ in range(TCP_FIN_RETIRES):
+            self.control_socket.sendto(b"FIN", self.server_address)
+
+        # 如果启用了压缩, 进行解压缩
+        if ENABLE_PRE_ZIP:
+            self.log("decompressing...")
+            start_time = self.get_time()
+            with ZIP_LIB.open(self.file_path, "rb") as f_in:
+                with open(FILE_PATH, "wb") as f_out:
+                    f_out.writelines(f_in)
+            end_time = self.get_time()
+            self.log(f"decompressing time: {end_time - start_time:.2f}s")
     def close_socket(self):
         # 关闭socket
         self.control_socket.close()
@@ -289,11 +308,11 @@ def main():
     client = Client()
     try:
         client.run()
+        client.calculate_md5()
     except KeyboardInterrupt as e:
         print(e)
     finally:
         client.show_statistical_info()
-        client.calculate_md5()
         client.close_socket()
     print("over")
 

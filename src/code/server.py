@@ -31,20 +31,21 @@ class Server:
         self.rtt = 0
         self.info = ServerInfo()
         self.status = TCPstatus.CLOSED
-
+        self.reset_chunk_size: bool = False  # 重置 chunk size
         self.init_socket()
         self.status = TCPstatus.LISTEN
 
         # 确定发送文件是否压缩
         if ENABLE_PRE_ZIP:
-            start_time = time.time()
-            if not os.path.exists(ZIP_FILE_PATH):
-                raise FileNotFoundError(ZIP_FILE_PATH)
+            self.log("zip file")
+            start_time = self.get_time()
+            if not os.path.exists(FILE_PATH):
+                raise FileNotFoundError(FILE_PATH)
             with open(FILE_PATH, "rb") as f_in:
                 with ZIP_LIB.open(ZIP_FILE_PATH, "wb") as f_out:
                     f_out.writelines(f_in)
-            end_time = time.time()
-            print(f"zip time: [{end_time - start_time}]")
+            end_time = self.get_time()
+            self.log(f"zip time: [{end_time - start_time}]")
 
         else:
             if not os.path.exists(FILE_PATH):
@@ -69,14 +70,16 @@ class Server:
         self.receive_ack()
         self.send_data()
 
-        for thread in self.receive_threads:
-            thread.join()
+        self.statistic_thread.join()
 
+        # 等待所有线程结束
         for thread in self.send_threads:
             thread.join()
 
+        for thread in self.receive_threads:
+            thread.join()
+
         self.timer_checker.join()
-        self.statistic_thread.join()
 
     def init_socket(self):
         """
@@ -103,7 +106,7 @@ class Server:
         self.lock = threading.Lock()
         self.send_threads: list[threading.Thread] = []  # 发送线程
         self.receive_threads: List[threading.Thread] = []  # 接收 ACK 线程
-        self.timeout_resend_threads : List[threading.Thread] = [] # 超时重发线程
+        self.timeout_resend_threads: List[threading.Thread] = []  # 超时重发线程
         self.timer_checker = threading.Thread(target=self.check_timer_arrival, args=())  # 定时器检查线程
         self.timer_checker.daemon = True
         # 统计信息的线程, 每隔一秒更新一次
@@ -111,23 +114,24 @@ class Server:
         self.statistic_thread.daemon = True
 
         # 初始化发送线程
-        # 计算每一个线程需要发送的文件大小, 如果不能整除的话采用四舍五入的方式
-        thread_send_size = int(round(self.file_size / SERVER_SEND_THREAD_NUMBER))
-        for thread_id in range(SERVER_SEND_THREAD_NUMBER - 1):
-            thread = threading.Thread(target=self.send_package, args=(thread_id, thread_send_size))
+        # 计算每一个线程需要发送的文件大小
+        self.max_package_count = 0
+        
+        thread_send_size = self.file_size // SERVER_SEND_THREAD_NUMBER
+        for thread_id in range(SERVER_SEND_THREAD_NUMBER):
+            # 将剩余部分都放入最后一个线程发送
+            start_offset = thread_id * thread_send_size
+            block_size = thread_send_size
+            if thread_id == SERVER_SEND_THREAD_NUMBER - 1:
+                # bias = thread_send_size * SERVER_SEND_THREAD_NUMBER - self.file_size
+                # block_size = thread_send_size - bias
+                block_size = self.file_size - thread_send_size * (SERVER_SEND_THREAD_NUMBER - 1)
+            thread = threading.Thread(target=self.send_package, args=(thread_id, start_offset, block_size))
             thread.daemon = True
             self.send_threads.append(thread)
-        # 将剩余部分都放入最后一个线程发送
-        bias = thread_send_size * SERVER_SEND_THREAD_NUMBER - self.file_size
-        thread = threading.Thread(
-            target=self.send_package,
-            args=(
-                SERVER_SEND_THREAD_NUMBER - 1,
-                thread_send_size - bias,
-            ),
-        )
-        thread.daemon = True
-        self.send_threads.append(thread)
+            self.max_package_count += block_size // CHUNK_SIZE
+        
+        self.log(f"max_package_count: {self.max_package_count}")
 
         # 初始化接收线程
         for thread_id in range(SERVER_ACK_HANDLE_THREAD_NUMBER):
@@ -142,10 +146,9 @@ class Server:
             thread.daemon = True
             self.timeout_resend_threads.append(thread)
 
-        self.max_package_count = SERVER_SEND_THREAD_NUMBER * (
-            int(round(self.file_size / SERVER_SEND_THREAD_NUMBER)) // CHUNK_SIZE
-        )
-        self.log(f"max_package_count: {self.max_package_count}")
+        
+
+        self.finish_transport = False
 
     def establish_connection(self):
         """
@@ -163,7 +166,7 @@ class Server:
         self.debug(f"rtt = {self.rtt}")
         self.status = TCPstatus.SYN_RCVD
 
-        syn_ack_data = f"SYN ACK {self.file_size}"
+        syn_ack_data = f"SYN ACK {self.file_size} {self.max_package_count}"
         self.data_socket.sendto(syn_ack_data.encode(), self.client_address)
         self.log("send SYN ACK")
 
@@ -199,15 +202,15 @@ class Server:
         self.timer_checker.start()
         # 启动所有超时重发线程
         for thread in self.timeout_resend_threads:
-            thread.start()    
-    
+            thread.start()
+
         # 启动所有发送线程
         for thread in self.send_threads:
             thread.start()
 
         self.statistic_thread.start()
 
-    def send_package(self, thread_id: int, thread_send_size: int):
+    def send_package(self, thread_id: int, start_offset: int, block_size: int):
         """
         每个线程根据偏移量分块发送
 
@@ -222,22 +225,21 @@ class Server:
         |                                                       |
         +-------------------------------------------------------+
         """
-        start_offset = thread_id * thread_send_size  # 起始偏移位置
         self.debug(f"start sending thread {thread_id}")
 
         with open(self.file_path, "rb") as f:
             f.seek(start_offset)
 
             # 如果小于分块大小, 直接一次性发送过去
-            if thread_send_size <= CHUNK_SIZE:
-                data = f.read(thread_send_size)
+            if block_size <= CHUNK_SIZE:
+                data = f.read(block_size)
                 header = struct.pack("!Q", start_offset)
                 full_message = header + data
                 send_time = self.get_time()
                 with self.lock:
                     self.timers[start_offset] = PackageInfo(
                         send_time=send_time,
-                        package_size=thread_send_size,
+                        package_size=block_size,
                     )
 
                 self.data_socket.sendto(full_message, self.client_address)
@@ -245,14 +247,14 @@ class Server:
 
             else:
                 # 按照分块大小发送 n 次
-                n = thread_send_size // CHUNK_SIZE
+                n = block_size // CHUNK_SIZE
                 for sequence_number in range(n):
                     # 发送的文件内容数据
                     seek_pos = start_offset + sequence_number * CHUNK_SIZE  # 文件偏移量
 
                     if sequence_number == n - 1:
                         # 最后一次把 thread_send_size 剩余的部分都发过去
-                        package_size = thread_send_size - sequence_number * CHUNK_SIZE
+                        package_size = block_size - sequence_number * CHUNK_SIZE
                     else:
                         package_size = CHUNK_SIZE  # 数据块大小
 
@@ -276,7 +278,8 @@ class Server:
             self.log(f"all packages send, ack/sent = {self.info.ack_received_count}/{self.info.package_sent_count}")
 
         # 当发送进程结束之后也加入超时重发线程
-        self.timeout_resend()    
+        self.timeout_resend()
+
     def receive_ack(self):
         """
         创建接收线程, 准备收 ACK 数据包
@@ -293,7 +296,12 @@ class Server:
             ack_data, _ = self.control_socket.recvfrom(1024)
             if len(ack_data) < 8:
                 # 多余的 ACK 数据包
-                self.log("receive unused ack package")
+                if ack_data.decode() == "ACK":
+                    self.log("receive unused ack package")
+                elif ack_data.decode() == "FIN":
+                    self.debug("receive FIN")
+                    self.finish_transport = True
+                    break
                 continue
             seek_pos = struct.unpack("!Q", ack_data[:8])[0]
 
@@ -308,26 +316,27 @@ class Server:
             package_rtt = self.get_time() - package_info.send_time
             if package_rtt > self.rtt * MAX_RTT_MULTIPLIER:
                 self.info.rtt_increase_counter += 1
-                self.info.rtt_decrease_counter -= 1
+                self.info.rtt_decrease_counter = 0
                 if self.info.rtt_increase_counter == ADJUST_RTT_THRESHOLD:
                     self.info.rtt_increase_counter = 0
-                    self.rtt *= MAX_RTT_MULTIPLIER // 2
+                    self.rtt *= MAX_RTT_MULTIPLIER
                     self.info.rtt_increase_count += 1
                     # self.log(f'{package_rtt} {self.rtt * MAX_RTT_MULTIPLIER}')
                     self.log("adjust rtt larger")
 
             elif package_rtt < self.rtt / MAX_RTT_MULTIPLIER:
                 self.info.rtt_decrease_counter += 1
-                self.info.rtt_increase_counter -= 1
+                self.info.rtt_increase_counter = 0
                 if self.info.rtt_decrease_counter == ADJUST_RTT_THRESHOLD:
                     self.info.rtt_decrease_counter = 0
-                    self.rtt /= MAX_RTT_MULTIPLIER // 2
+                    self.rtt /= MAX_RTT_MULTIPLIER
                     self.info.rtt_decrease_count += 1
-                    # self.log(f'{package_rtt} {self.rtt * MAX_RTT_MULTIPLIER}')
                     self.log("adjust rtt smaller")
 
-            self.info.rtt_decrease_counter = max(self.info.rtt_decrease_counter, 0)
-            self.info.rtt_increase_counter = max(self.info.rtt_increase_counter, 0)
+            if self.info.rtt_decrease_counter < 0:
+                self.info.rtt_decrease_counter = 0
+            if self.info.rtt_increase_counter < 0:
+                self.info.rtt_increase_counter = 0
 
             # 收到 ACK 之后清除定时器
             with self.lock:
@@ -361,9 +370,9 @@ class Server:
                     self.timers[seek_pos] = None
 
     def timeout_resend(self):
-        '''
+        """
         超时重发
-        '''
+        """
         # 全部发送完毕后等待没有 ACK 的数据包再次发送
         while True:
             seek_pos, package_size = self.data_queue.get()
@@ -378,21 +387,27 @@ class Server:
                         package_size=package_size,
                     )
                 full_message = header + data
-                # 如果当前缓冲区已满, 延迟一段时间后再次发送
-                # if self.info.ack_received_count < (self.info.package_sent_count + self.info.package_resent_count) // 10:
-                #     # self.log('sleep for a while')
-                #     time.sleep(self.rtt * MAX_RTT_MULTIPLIER * 10)
 
                 self.data_socket.sendto(full_message, self.client_address)
                 self.info.package_resent_count += 1
                 self.debug("resend package")
 
     def display_statistic(self):
+        """
+        显示统计信息
+
+        tc 设置的流量规则如果包很大的话会卡住发不出去
+        """
+
         while True:
             time.sleep(STATISTIC_INTERVAL)
             self.log("-" * 20)
             self.show_statistical_info()
             self.log("-" * 20)
+
+            if self.finish_transport:
+                self.log("receive FIN, finish transport")
+                break
 
     def close_socket(self):
         self.control_socket.close()
@@ -418,7 +433,6 @@ class Server:
         # self.log(f"rtt: {self.rtt}")
         # self.log(f"rtt increase time: {self.info.rtt_increase_count}")
         # self.log(f"rtt decrease time: {self.info.rtt_decrease_count}")
-        
 
         # print(NUMBER, self.info.package_sent_count - self.info.ack_received_count)
 
@@ -439,7 +453,9 @@ def main():
     try:
         server.run()
     except KeyboardInterrupt as e:
-        print(e)
+        print("keyboard interrupt")
+    except ConnectionResetError as e:
+        print("connection reset")
     finally:
         server.show_statistical_info()
         # server.calculate_md5()

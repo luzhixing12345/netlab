@@ -14,7 +14,6 @@ update:
 	docker cp src/code/config.py client:/root
 	docker cp src/code/server.py server:/root
 	docker cp src/code/config.py server:/root
-	docker cp docker/server/Makefile server:/root
 
 restart:
 	docker restart client server monitor
@@ -28,8 +27,8 @@ ssh:
 	docker exec -it monitor /usr/sbin/sshd
 
 test:
-	docker cp b.py client:/root
-	docker cp a.py server:/root
+	docker cp resources/client.py client:/root
+	docker cp resources/server.py server:/root
 
 run:
 	docker exec -it monitor sh /etc/tmux.sh
