@@ -31,3 +31,7 @@ NUDT 高级计算机网络实验:基于UDP的可靠传输
 课程将会对实验报告进行严格打分,包括格式.
 
 课程提供了 Latex 版本的实验报告模板
+
+## 参考
+
+- [sunyunqiang reliable_udp_protocol](https://sunyunqiang.com/blog/reliable_udp_protocol/)

@@ -1,5 +1,5 @@
 
-.PHONY: init
+.PHONY: init release
 
 init:
 	docker cp src/code/client.py client:/root
@@ -27,8 +27,22 @@ ssh:
 	docker exec -it monitor /usr/sbin/sshd
 
 test:
-	docker cp resources/client.py client:/root
-	docker cp resources/server.py server:/root
+	docker cp src/GetScore.py monitor:/root
+	docker cp src/code/run.json monitor:/root
+	docker cp src/code/client.py monitor:/root
+	docker cp src/code/config.py monitor:/root
+	docker cp src/code/server.py monitor:/root
+	docker cp src/chunk_generator.py monitor:/root
+
+SERVER = micro:~/
+CLIENT = test:~/
+
+scp:
+	scp src/code/client.py $(CLIENT)
+	scp src/code/server.py $(SERVER)
+	scp src/code/config.py $(SERVER)
+	scp src/chunk_generator.py $(SERVER)
+	scp src/code/config.py $(CLIENT)
 
 run:
 	docker exec -it monitor sh /etc/tmux.sh
