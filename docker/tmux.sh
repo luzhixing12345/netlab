@@ -22,6 +22,7 @@ tmux send-keys -t mysession:0.1 'clear' C-m
 # comment here
 tmux send-keys -t mysession:0.2 'export PS1="monitor:\w \$ "' C-m
 tmux send-keys -t mysession:0.2 'cd' C-m
+# 使用虚拟 python 环境
 tmux send-keys -t mysession:0.2 '. bin/activate' C-m
 tmux send-keys -t mysession:0.2 'clear' C-m
 

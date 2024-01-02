@@ -148,11 +148,11 @@ chmod +x tmux.sh
 
 > 如果容器关闭之后需要手动执行一下 `/usr/sbin/sshd` 不然 SSH 连接会失败
 
+可以在 monitor 中创建一个虚拟 Python 环境, 类似执行 GetScore.py 查看结果. 或者分别在 server 和 client 上执行对应的程序
+
 ## 检查内核配置
 
 确保内核配置中启用了 NET_EM,可以通过查看 /boot/config-$(uname -r) 文件或 /proc/config.gz 文件来检查.使用以下命令
-
-
 
 ```bash
 grep NET_EM /boot/config-$(uname -r)

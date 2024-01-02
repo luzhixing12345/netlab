@@ -160,9 +160,10 @@ cython_debug/
 #.idea/
 
 resources/
-docs/
 a.py
 *.bin
 b.py
-release/
+release_code/GetScore.py
+release_code/chunk_generator.py
+release_code/result.txt
 src/GetScore.py
