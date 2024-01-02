@@ -18,8 +18,8 @@ LOG_MODE = "INFO"
 CLIENT_IP = "202.100.10.2"  # 客户端 IP, 其实没有必要确定, 也不应该知道
 SERVER_IP = "202.100.10.3"  # 服务端 IP
 
-CLIENT_IP = "192.168.232.137"  # 客户端 IP, 其实没有必要确定, 也不应该知道
-SERVER_IP = "192.168.232.136"  # 服务端 IP
+# CLIENT_IP = "192.168.232.137"  # 客户端 IP, 其实没有必要确定, 也不应该知道
+# SERVER_IP = "192.168.232.136"  # 服务端 IP
 
 # CLIENT_IP = "127.0.0.1"  # only for debug
 # SERVER_IP = "127.0.0.1"  # only for debug
