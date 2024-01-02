@@ -263,9 +263,9 @@ class Server:
                 # 添加一个定时器
                 with self.lock:
                     send_time = self.get_time()  # 发送时间
-                    self.timers[seek_pos] = PackageInfo(
+                    self.timers[seek_pos] = (
                         send_time=send_time,
-                        package_size=package_size,
+                        package_size=package_sizPackageInfoe,
                     )
                 self.data_socket.sendto(full_message, self.client_address)
 

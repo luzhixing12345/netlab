@@ -55,12 +55,9 @@ class Client:
         """
         self.lock = threading.Lock()
         self.receive_threads: List[threading.Thread] = []  # 接收线程
-        # 统计信息的线程, 每隔一秒更新一次
+        # 统计信息的线程, 每隔2秒更新一次
         self.statistic_thread = threading.Thread(target=self.display_statistic, args=())
         self.statistic_thread.daemon = True
-
-        # (seek_pos, data)
-        self.data_queue = Queue()
 
         for thread_id in range(CLIENT_RECEIVE_THREAD_NUMBER):
             thread = threading.Thread(
@@ -157,11 +154,11 @@ class Client:
         从 data socket 接收数据, 从 control socket 发送 ACK, ACK 数据包格式如下
 
         1                          4                          8
-        +--------------------------+--------------------------+
-        |                          |                          |
-        |       thread id          |      sequence number     |
-        |                          |                          |
-        +--------------------------+--------------------------+
+        +-----------------------------------------------------+
+        |                                                     |
+        |                      seek pos                       |
+        |                                                     |
+        +-----------------------------------------------------+
         """
         self.debug(f"start listening thread")
         while True:
@@ -175,7 +172,7 @@ class Client:
             with self.lock:
                 is_duplicate_package = seek_pos in self.block_pos_set
             if is_duplicate_package:
-                # 已经接收过了, 这是因为ACK 数据包丢失重发的数据
+                # 已经接收过了, 这是因为 ACK 数据包丢失重发的数据
                 # ACK 丢包说明网络环境可能不太好, 多次重发 ACK 数据包通知 server 数据已到达
                 for _ in range(MAX_ACK_RETRIES):
                     ack_header = struct.pack("!Q", seek_pos)
