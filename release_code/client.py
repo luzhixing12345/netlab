@@ -74,7 +74,6 @@ SYN_ACK_PATTERN = re.compile(r"SYN ACK (?P<max_package_count>\d+)")
 # 当客户端发送的 ACK 服务器没有收到,重发的数据包过来之后客户端多次重发 ACK 的数量
 MAX_ACK_RETRIES = 2
 
-
 class ClientInfo:
     package_received_count = 0  # 接收到的有效数据包的个数(不包含重复接收的数据包)
     package_duplicated_count = 0  # 重复接收的数据包的个数
@@ -258,7 +257,8 @@ class Client:
                 self.control_socket.sendto(ack_header, self.server_address)
 
                 data = package_data[DATA_HEADER_SIZE:]
-                self.file_data.append((seek_pos, data))
+                with self.lock:
+                    self.file_data.append((seek_pos, data))
 
                 self.debug(f"[{thread_id}] send ack")
                 self.info.package_received_count += 1
@@ -269,14 +269,15 @@ class Client:
         对 file_data 按照 seek_pos 进行排序, 依次写入
         """
         self.log(f"start writing data to {self.file_path}")
-        if len(self.file_data) > self.max_package_count:
-            self.log("error!")
-            self.file_data = list(set(self.file_data))
+        with self.lock:
+            if len(self.file_data) > self.max_package_count:
+                self.log("error!")
+                self.file_data = list(set(self.file_data))
 
-        self.file_data.sort(key=lambda x: x[0])
-        with open(self.file_path, "wb") as f:
-            for _, data in self.file_data:
-                f.write(data)
+            self.file_data.sort(key=lambda x: x[0])
+            with open(self.file_path, "wb") as f:
+                for _, data in self.file_data:
+                    f.write(data)
 
         self.log(f"finish writing data to {self.file_path}")
 
@@ -348,7 +349,7 @@ def main():
     client = Client()
     try:
         client.run()
-        # client.calculate_md5()
+        client.calculate_md5()
     except KeyboardInterrupt as e:
         print(e)
     finally:

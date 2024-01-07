@@ -75,7 +75,6 @@ SYN_ACK_PATTERN = re.compile(r"SYN ACK (?P<max_package_count>\d+)")
 # 当客户端发送的 ACK 服务器没有收到,重发的数据包过来之后客户端多次重发 ACK 的数量
 MAX_ACK_RETRIES = 2
 
-
 class PackageInfo:
     def __init__(self, send_time: float, package_size: int) -> None:
         self.send_time: float = send_time  # 数据包发送时间
@@ -208,6 +207,8 @@ class Server:
 
         # (seek_pos, package_size)
         self.data_queue = Queue()
+        
+        # 初始化超时重传线程
         for thread_id in range(SERVER_TIMEOUT_RESEND_THREAD_NUMBER):
             thread = threading.Thread(target=self.timeout_resend, args=())
             thread.daemon = True

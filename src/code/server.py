@@ -141,6 +141,8 @@ class Server:
 
         # (seek_pos, package_size)
         self.data_queue = Queue()
+        
+        # 初始化超时重传线程
         for thread_id in range(SERVER_TIMEOUT_RESEND_THREAD_NUMBER):
             thread = threading.Thread(target=self.timeout_resend, args=())
             thread.daemon = True
@@ -263,9 +265,9 @@ class Server:
                 # 添加一个定时器
                 with self.lock:
                     send_time = self.get_time()  # 发送时间
-                    self.timers[seek_pos] = (
+                    self.timers[seek_pos] = PackageInfo(
                         send_time=send_time,
-                        package_size=package_sizPackageInfoe,
+                        package_size=package_size,
                     )
                 self.data_socket.sendto(full_message, self.client_address)
 

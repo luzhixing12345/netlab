@@ -40,9 +40,9 @@ CLIENT = test:~/
 scp:
 	scp src/code/client.py $(CLIENT)
 	scp src/code/server.py $(SERVER)
-	scp src/code/config.py $(SERVER)
 	scp src/chunk_generator.py $(SERVER)
 	scp src/code/config.py $(CLIENT)
+	scp src/code/config.py $(SERVER)
 
 run:
 	docker exec -it monitor sh /etc/tmux.sh

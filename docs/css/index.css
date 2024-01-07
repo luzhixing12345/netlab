@@ -194,7 +194,10 @@ blockquote {
     word-wrap: normal;
     background-color: initial;
     border: 0;
+    cursor: text;
 }
+
+
 
 .markdown-body ul {
     padding-left: 0;

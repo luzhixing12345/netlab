@@ -191,7 +191,8 @@ class Client:
                 self.control_socket.sendto(ack_header, self.server_address)
 
                 data = package_data[DATA_HEADER_SIZE:]
-                self.file_data.append((seek_pos, data))
+                with self.lock:
+                    self.file_data.append((seek_pos, data))
 
                 self.debug(f"[{thread_id}] send ack")
                 self.info.package_received_count += 1
@@ -202,14 +203,15 @@ class Client:
         对 file_data 按照 seek_pos 进行排序, 依次写入
         """
         self.log(f"start writing data to {self.file_path}")
-        if len(self.file_data) > self.max_package_count:
-            self.log("error!")
-            self.file_data = list(set(self.file_data))
+        with self.lock:
+            if len(self.file_data) > self.max_package_count:
+                self.log("error!")
+                self.file_data = list(set(self.file_data))
 
-        self.file_data.sort(key=lambda x: x[0])
-        with open(self.file_path, "wb") as f:
-            for _, data in self.file_data:
-                f.write(data)
+            self.file_data.sort(key=lambda x: x[0])
+            with open(self.file_path, "wb") as f:
+                for _, data in self.file_data:
+                    f.write(data)
 
         self.log(f"finish writing data to {self.file_path}")
 
